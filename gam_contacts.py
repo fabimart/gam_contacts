@@ -1,3 +1,9 @@
+
+# gam_contacts.py : add the contacts funcionality to GAM
+#
+# history
+# 2014-11-25 - fabiano.martins@trt4.jus.br - first functional version
+
 # Requires: python-httplib2, python-uri-templates, pythopn-gdata
 
 from __builtin__ import RuntimeError
