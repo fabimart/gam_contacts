@@ -1,3 +1,4 @@
+#!/usr/bin/python
 
 # gam_contacts.py : add the contacts funcionality to GAM
 #
@@ -21,9 +22,7 @@ import httplib2
 try:
     import oauth2client.client
 except ImportError:
-    fallbackdir = os.path.join(os.path.dirname(__file__), 'GAM-3.42')
-    fallbackdir = os.path.normpath(fallbackdir)
-    sys.path.append(fallbackdir)
+    sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), 'GAM-3.42')))
     import oauth2client.client
 
 
@@ -34,7 +33,7 @@ class GoogleUser(object):
         self.contacts_service = None
 
     # TODO: revise
-    def contact_delete(self, contact):
+    def contact_delete(self, contact, verbose):
         which_feed = contact / len(self.contact_feeds[0].entry)
         contact_on_feed = contact - (which_feed * len(self.contact_feeds[0].entry))
 
@@ -45,26 +44,25 @@ class GoogleUser(object):
 
         for mailtmp in self.contact_feeds[which_feed].entry[contact_on_feed].email:
             mail = mailtmp.address
-        print 'removendo contact %s' % mail
+
+        spits_log('removing contact %s... ' % mail, verbose)
+
         if self.contacts_service is None:
             self.contacts_service = ContactsService(self.user_id)
 
-        for tentativa in range(5):
+        for retryCount in range(5):
             try:
                 self.contacts_service.client.Delete(self.contact_feeds[which_feed].entry[contact_on_feed])
             except gdata.client.RequestError, e:
 #                    e.status == 402 and
-                if '<code>userRateLimitExceeded</code>' in e.body:
-                    print 'FALHA NA REMOCAO : causa: %s' % str(e.body)
-                    print '(retentativa %d/5)' % (tentativa + 1)
-                    sys.stdout.flush()
-                    time.sleep(1)
+                spits_log('error %d removing contact %d for user %s. cause: %s\n' % (e.status, contact, self.user_id, str(e.body)), False)
+                if e.status == 403 and '<code>userRateLimitExceeded</code>' in e.body:
+                    spits_log('retrying (%d/5)... ' % (retryCount + 1))
+                    time.sleep(retryCount)
                 else:
-                    print 'FALHA NA REMOCAO : %s' % str(e.body)
-                    print '(desistindo)'
+                    spits_log('unknown reason: giving up...\n')
                     raise e
-            sys.stdout.flush()
-            print '(removido)'
+            spits_log('(removed)\n', verbose)
             break
 
     def get_contacts(self, verbose, emails_only=True):
@@ -171,6 +169,8 @@ class ContactsService(Service):
 
         self.client = oauth2_token.authorize(gd_client)
 
+# -c /home/fabiano/Dropbox/eclipse/workspace_django/estudo_gapps/teste2/teste-contacts-c8bfe687f62c.json kill_contacts fabiano.teste@trt4.jus.br
+
 
 class Command(object):
 
@@ -185,73 +185,63 @@ class Command(object):
 
     @staticmethod
     def do_list(googleUser, options):
-        for contact_emails in googleUser.get_contacts(options.verbose, emails_only=True):
-            for email in contact_emails['mail']:
+        for contacts in googleUser.get_contacts(options.verbose, emails_only=True):
+            for email in contacts['mail']:
                 if Command.test_domain(email, options):
+                    if type(email) == unicode:
+                        email = email.encode('ascii', 'ignore')
+                        if options.verbose:
+                            spits_log('WARNING: unicode data at mail %s\n' % email)
                     if Command.test_valid(email, options):
                         print email
                     else:
                         print '%s (invalid)' % email
+                    sys.stdout.flush()
 
-    # TODO: revise
-    '''
-    def do_kill_contact_all(usuario):
-        contatos = usuario.get_contacts(apenas_email=True)
-        for i in range(len(contatos)):
-            if EXECUCAO_FAKE:
-                print 'mataria o contato %d (mail %s)' % (i, contatos[i]['mail'])
+    @staticmethod
+    def do_kill_contacts(googleUser, options):
+
+        if not options.assumeyes:
+
+            if options.nochange:
+                message = 'this command will simulate the deletion of all contacts from %s' % googleUser.user_id
             else:
-                usuario.contact_delete(i)
+                message = 'WARNING: this command will be delete all contacts from %s' % googleUser.user_id
 
-    # TODO: revise
-    def do_kill_contact_trt4_all(usuario):
-        contatos = usuario.get_contacts(apenas_email=True)
-        for i in range(len(contatos)):
-            achou = False
-            for email in contatos[i]['mail']:
-                if is_trt4(email):
-                    achou = True
+            if options.domain:
+                message = '%s that have email suffix %s' % (message, options.domain)
+
+            if options.listofvalidemails:
+                if options.domain:
+                    message = '%s and' % message
+                message = '%s are not contained on %s file' % (message, options.listofvalidemails)
+
+            print message
+            while True:
+                confirm = raw_input('confirm (Y/n)? ')
+                if confirm == 'n':
+                    print 'command aborted by user'
+                    return
+                elif confirm == 'Y':
                     break
-
-            if achou:
-                if EXECUCAO_FAKE:
-                    print 'mataria o contato %d (mail %s)' % (i, email)
                 else:
-                    usuario.contact_delete(i)
+                    print 'please ask "Y" or "n"'
 
-    # TODO: revise
-    def do_kill_contact_trt4_invalid(usuario):
-        raise NotImplementedError
-        contatos = usuario.get_contacts(apenas_email=True)
-        for i in range(len(contatos)):
-            achou = False
-            for email in contatos[i]['mail']:
-                if is_trt4(email):
-                    if not is_valid(email):
-                        achou = True
-                        break
-
-            if achou:
-                print 'mataria o contato %d (mail %s)' % (i, email)
-            else:
-                usuario.contact_delete(i)
-
-    # TODO: revise
-    def do_kill_mail_trt4_invalid(usuario):
-        raise NotImplementedError
-        contatos = usuario.get_contacts(apenas_email=True)
-        for i in range(len(contatos)):
-            achou = False
-            for email in contatos[i]['mail']:
-                if is_trt4(email):
-                    if not is_valid(email):
-                        achou = True
-                        break
-
-            if achou:
-                print 'mataria o contato %d (mail %s)' % (i, email)
-
-    '''
+        contacts = googleUser.get_contacts(options.verbose, emails_only=True)
+        for i in range(len(contacts)):
+            kill = False
+            for email in contacts[i]['mail']:
+                if Command.test_domain(email, options) and not Command.test_valid(email, options):
+                    kill = True
+                    break
+            if kill:
+                if options.nochange:
+                    if len(contacts[i]['mail']) == 1:
+                        print 'Contact %d (%s) would be removed, skipping by -n option' % (i, contacts[i]['mail'][0])
+                    else:
+                        print 'Contact %d (%s) would be removed, skipping by -n option' % (i, contacts[i]['mail'])
+                else:
+                    googleUser.contact_delete(i, options.verbose)
 
 
 def parse_args():
@@ -275,11 +265,13 @@ def parse_args():
     parser.add_option('-d', '--domain', action='store',
                       help='domain to use, if not informed use all domains')
     parser.add_option('-l', '--listofvalidemails', action='store',
-                      help='text file whith a list o valid emails')
+                      help='text file whith a list o valid emails, useful on kill_* commands')
     parser.add_option('-n', '--nochange', action='store_true', default=False,
                       help='credentials file')
     parser.add_option('-c', '--credentials', action='store', default='/etc/gam_contacts_credentials.json',
                       help='credentials file')
+    parser.add_option('-y', '--assumeyes', action='store_true', default=False,
+                      help='assume yes; assume that the answer to any question which would be asked is yes')
     (options, args) = parser.parse_args()
 
     if len(args) < 1:
@@ -312,19 +304,6 @@ def parse_args():
         Service.json_data = json.loads(json_string)
     except IOError, e:
         parser.error('error reading credentails file "%s": %s' % (options.credentials, str(e)))
-
-    # TODO: revise daqui em diante
-    '''
-    if len(sys.argv) < 2 or not sys.argv[1] in comando:
-        print 'syntax: limpa_contatos.py <COMANDO> <USUARIO1> [<USUARIO2> [...]], onde <COMANDO> pode ser:\n'\
-              '        list : lista os contatos (apenas mails)\n'\
-              '        kill_contact_all : apaga todos contatos'\
-              '        kill_contact_trt4_all : apaga todos contatos que contenham emails trt4.jus.br'\
-              '        kill_contact_trt4_invalid : apaga os contatos que contenham emails trt4.jus.br que sao invalidos'\
-              '        kill_mail_trt4_all : apaga todos emails trt4.jus.br'\
-              '        kill_mail_trt4_invalid : apaga os emails trt4.jus.br que sao invalidos'
-        sys.exit(1)
-    '''
 
     return (options, command, users)
 
